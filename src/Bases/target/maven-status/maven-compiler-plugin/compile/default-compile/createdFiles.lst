@@ -1,0 +1,6 @@
+com/mycompany/bases/controllers/OracleController.class
+com/mycompany/bases/config/DatabaseConfig.class
+com/mycompany/bases/utils/PrettyPrinter.class
+com/mycompany/bases/views/MenuView.class
+com/mycompany/bases/controllers/MongoController.class
+com/mycompany/bases/Bases.class
