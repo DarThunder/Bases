@@ -1,0 +1,2 @@
+Nomas ejecuta el archivo "init.bat" Y YA
+apañado
