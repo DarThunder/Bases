@@ -68,7 +68,7 @@ public class MenuView {
         
         // Inicializa el controlador de Oracle
         // Establece conexión automática según configuración
-        this.oracleController = new OracleController();
+        this.oracleController = new OracleController(mongoController);
     }
     
     /**

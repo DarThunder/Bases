@@ -143,6 +143,22 @@ CREATE TYPE DetallesVentaType AS OBJECT (
 );
 /
 
+-- SECUENCIAS
+
+-- Secuencia para productos
+CREATE SEQUENCE producto_seq
+START WITH 1          -- comienza en 1
+INCREMENT BY 1        -- incrementa de uno en uno
+NOCACHE               -- no cachear valores
+NOCYCLE;              -- no ciclar, no reinicia
+
+-- Secuencia para ventas
+CREATE SEQUENCE venta_seq
+START WITH 1
+INCREMENT BY 1
+NOCACHE
+NOCYCLE;
+
 -- TABLAS
 
 -- Tabla Productos (tabla padre)
