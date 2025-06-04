@@ -314,11 +314,21 @@ public class OracleController {
     }
 
     /**
-     * Agrega una nueva venta básica al sistema. Solicita el ID del usuario
-     * (cliente) y el total de la venta. La fecha se establece automáticamente
-     * con SYSDATE.
+     * Crea una venta completa con sus detalles de productos. Permite agregar
+     * múltiples productos a la venta y calcula automáticamente el total basado
+     * en los subtotales de cada producto.
      *
-     * @see #createCompleteVenta()
+     * <p>
+     * Proceso:</p>
+     * <ol>
+     * <li>Crea la venta con total inicial de 0</li>
+     * <li>Permite agregar productos uno por uno</li>
+     * <li>Calcula subtotales automáticamente</li>
+     * <li>Actualiza el total final de la venta</li>
+     * </ol>
+     *
+     * @see #addVenta()
+     * @see #manageVentas()
      */
     public void addVenta() {
         try {
@@ -326,21 +336,86 @@ public class OracleController {
             int idUsuario = scanner.nextInt();
             scanner.nextLine();
 
-            System.out.print("Ingrese total de la venta: ");
-            double total = scanner.nextDouble();
-            scanner.nextLine();
-
-            String sql = "INSERT INTO Ventas VALUES (VentaType(venta_seq.NEXTVAL, SYSDATE, ?, ?))";
-
-            PreparedStatement pstmt = oracleConn.prepareStatement(sql);
-            pstmt.setDouble(1, total);
-            pstmt.setInt(2, idUsuario);
-
+            PreparedStatement pstmt = oracleConn.prepareStatement(
+                    "INSERT INTO Ventas VALUES (VentaType(venta_seq.NEXTVAL, SYSDATE, 0, ?))");
+            pstmt.setInt(1, idUsuario);
             pstmt.executeUpdate();
-            System.out.println("Venta agregada con éxito!");
+
+            int idVenta = -1;
+            String sqlSeq = "SELECT venta_seq.CURRVAL FROM dual";
+            try (Statement stmt = oracleConn.createStatement(); ResultSet rs = stmt.executeQuery(sqlSeq)) {
+                if (rs.next()) {
+                    idVenta = rs.getInt(1);
+                }
+            }
+
+            System.out.println("Venta creada con ID: " + idVenta);
+
+            double totalVenta = 0;
+            String continuar = "s";
+
+            while (continuar.equalsIgnoreCase("s")) {
+                System.out.print("Ingrese ID del producto: ");
+                int idProducto = scanner.nextInt();
+
+                System.out.print("Ingrese cantidad: ");
+                int cantidad = scanner.nextInt();
+                scanner.nextLine();
+
+                PreparedStatement pstmtPrecio = oracleConn.prepareStatement(
+                        "SELECT REF(p), p.precio, p.nombre FROM Productos p WHERE p.idProducto = ?");
+                pstmtPrecio.setInt(1, idProducto);
+                ResultSet rs = pstmtPrecio.executeQuery();
+
+                if (rs.next()) {
+                    double precio = rs.getDouble("precio");
+                    String nombreProducto = rs.getString("nombre");
+                    double subtotal = precio * cantidad;
+                    totalVenta += subtotal;
+
+                    // Obtenemos el REF al producto
+                    java.sql.Ref refProducto = (java.sql.Ref) rs.getRef(1);
+
+                    // Obtenemos el REF a la venta
+                    PreparedStatement pstmtVenta = oracleConn.prepareStatement(
+                            "SELECT REF(v) FROM Ventas v WHERE v.idVenta = ?");
+                    pstmtVenta.setInt(1, idVenta);
+                    ResultSet rsVenta = pstmtVenta.executeQuery();
+
+                    if (rsVenta.next()) {
+                        java.sql.Ref refVenta = (java.sql.Ref) rsVenta.getRef(1);
+
+                        // Insertamos el detalle
+                        PreparedStatement pstmtDetalle = oracleConn.prepareStatement(
+                                "INSERT INTO DetallesVenta VALUES (det_venta_seq.NEXTVAL, ?, ?, ?, ?)");
+                        pstmtDetalle.setInt(1, cantidad);
+                        pstmtDetalle.setDouble(2, subtotal);
+                        pstmtDetalle.setRef(3, refVenta);
+                        pstmtDetalle.setRef(4, refProducto);
+
+                        pstmtDetalle.executeUpdate();
+
+                        System.out.println("Producto '" + nombreProducto + "' agregado - Subtotal: $" + subtotal);
+                    } else {
+                        System.out.println("Venta no encontrada con ID: " + idVenta);
+                    }
+                } else {
+                    System.out.println("Producto no encontrado");
+                }
+
+                System.out.print("¿Agregar otro producto? (s/n): ");
+                continuar = scanner.nextLine();
+            }
+
+            PreparedStatement pstmtTotal = oracleConn.prepareStatement("UPDATE Ventas SET total = ? WHERE idVenta = ?");
+            pstmtTotal.setDouble(1, totalVenta);
+            pstmtTotal.setInt(2, idVenta);
+            pstmtTotal.executeUpdate();
+
+            System.out.println("Venta completada - Total: $" + totalVenta);
 
         } catch (SQLException e) {
-            System.err.println("Error al agregar venta: " + e.getMessage());
+            System.err.println("Error al crear venta: " + e.getMessage());
         }
     }
 
@@ -425,6 +500,7 @@ public class OracleController {
                 System.out.println("\n=== DETALLES DE LA VENTA ===");
                 System.out.printf("ID: %d\nFecha: %s\nTotal: $%.2f\nCliente: %s\n",
                         ventaId, fecha.toString(), total, nombreUsuario);
+                showVentaDetails(id);
             } else {
                 System.out.println("No se encontró venta con ID: " + id);
             }
@@ -492,7 +568,47 @@ public class OracleController {
         }
         return false;
     }
-    
+
+    /**
+     * Muestra los detalles de productos de una venta específica. Incluye
+     * cantidad, subtotal y nombre del producto.
+     *
+     * @param idVenta el ID de la venta cuyos detalles se mostrarán
+     */
+    private void showVentaDetails(int idVenta) {
+        try {
+            String sql = """
+            SELECT dv.Cantidad, dv.Subtotal, DEREF(dv.producto).nombre AS producto
+            FROM DetallesVenta dv
+            WHERE dv.venta = (SELECT REF(v) FROM Ventas v WHERE v.idVenta = ?)
+        """;
+
+            PreparedStatement pstmt = oracleConn.prepareStatement(sql);
+            pstmt.setInt(1, idVenta);
+            ResultSet rs = pstmt.executeQuery();
+
+            boolean hasDetails = false;
+            while (rs.next()) {
+                if (!hasDetails) {
+                    System.out.printf("%-20s %-10s %-10s%n", "Producto", "Cantidad", "Subtotal");
+                    System.out.println("─".repeat(45));
+                    hasDetails = true;
+                }
+
+                System.out.printf("%-20s %-10d $%-10.2f%n",
+                        rs.getString("producto"),
+                        rs.getInt("Cantidad"),
+                        rs.getDouble("Subtotal"));
+            }
+
+            if (!hasDetails) {
+                System.out.println("(Sin detalles de productos)");
+            }
+        } catch (SQLException e) {
+            System.err.println("Error al mostrar detalles de venta: " + e.getMessage());
+        }
+    }
+
     /**
      * Cierra la conexión a la base de datos Oracle. Debe llamarse al finalizar
      * el uso del controlador para liberar recursos.
